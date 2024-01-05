@@ -32,15 +32,9 @@ class NeuralGinStrategy(GinStrategy):
 
         # ensure we have a neural net with our expected outputs
         self.nn = neural_net
-        required_outputs = ['action_start', 'action_end', 'index', 'accept_improper_knock']
+        required_outputs = ['action_start', 'action_end', 'index']
         for output in required_outputs:
             assert output in self.nn.outputs.keys(), "we require a neural net with an '" + output + "' output neuron"
-
-    def consider_accepting_improper_knock(self):
-        self.nn.pulse()
-        possibilities = [False, True]
-        index = NeuralGinStrategy.decode_signal(self.nn.outputs['accept_improper_knock'], len(possibilities))
-        return possibilities[index]
 
     # split a given a signal in [0, 1] into n buckets, returning the index of the bucket (starting at 0)
     @staticmethod

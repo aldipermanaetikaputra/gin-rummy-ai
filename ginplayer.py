@@ -165,6 +165,3 @@ class GinPlayer(Observable):
     # empty the player's hand
     def empty_hand(self):
         self.hand = GinHand()
-
-    def accept_improper_knock(self):
-        return self.strategy.consider_accepting_improper_knock()

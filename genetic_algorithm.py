@@ -20,24 +20,10 @@ class GeneSet(object):
     def __init__(self, genes=None):
         if isinstance(genes, int):
             # create genome of the requested size.
-#            # for the random seed values, we want to try to pick smart values.
-#            # let's make 2% of the weights significant and the rest small randoms
+            # for the random seed values, we want to try to pick smart values.
+            # let's make 2% of the weights significant and the rest small randoms
             self.genes = []
-            default_length = genes
-#            possible_means = [-2.0, -1.0, 0.0, 1.0, 2.0]
-#            shuffle(possible_means)
-#            mean = possible_means[0]
-            mean = 0
-            stdev = 1
-
-#            [self.genes.append(abs(random.gauss(0, 1))) for _ in range(int(0.02 * default_length))]
-#            [self.genes.append(abs(random.gauss(mean, 0.25))) for _ in range(int(0.98 * default_length))]
-            [self.genes.append(random.gauss(mean, stdev)) for _ in range(default_length)]
-#            shuffle(self.genes)
-
-            # make sure the integer rounding doesn't lose us a gene or two
-            for _ in range(genes - len(self.genes)):
-                self.genes.append(abs(random.gauss(mean, stdev)))
+            [self.genes.append(random.gauss(0, 1)) for _ in range(genes)]
 
         elif isinstance(genes, list):
             # store genome, ensuring genes are valid
@@ -89,9 +75,14 @@ class GinGeneSet(GeneSet):
 
 
 class Population(object):
-    def __init__(self, gene_size, population_size, retain_best=None, local_storage=None):
+    def __init__(self, population_size, retain_best=None, local_storage=None):
         self.member_genes = {}
         self.current_generation = 0
+        self.population_size = population_size
+        self.num_inputs = 11 + 33
+        self.num_outputs = 3
+        self.num_hidden = int((self.num_inputs + self.num_outputs) * (2.0 / 3.0))
+        self.gene_size = self.num_inputs + (self.num_hidden * self.num_inputs) + (self.num_hidden * self.num_hidden) + (self.num_outputs * self.num_hidden)
 
         if retain_best is None:
             # by default, keep at least 2 and at most best 10%
@@ -107,7 +98,7 @@ class Population(object):
 
         # create the initial genes
         for i in range(population_size):
-            self.add_member(GeneSet(gene_size), 0)
+            self.add_member(GeneSet(self.gene_size), 0, 0)
 
     # iterate through one generation
     def generate_next_generation(self):
@@ -119,7 +110,7 @@ class Population(object):
         # cull the meek elders
         self.cull()
 
-        self.cross_over(self.retain_best)
+        self.cross_over()
 
         self.current_generation += 1
 
@@ -128,9 +119,9 @@ class Population(object):
             self.persist(action='store')
 
     # add a member with a given generation
-    def add_member(self, geneset, generation):
-        self.member_genes[geneset] = {'match_wins': 0, 'match_losses': 0, 'game_wins': 0, 'coinflip_game_wins': 0,
-                                      'game_losses': 0, 'game_points': 0, 'generation': generation}
+    def add_member(self, geneset, generation, mutation):
+        self.member_genes[geneset] = {'game_wins': 0, 'game_draws': 0,
+                                      'game_losses': 0, 'game_points': 0, 'generation': generation, 'mutation': mutation}
 
     # return the top N specimens of the population
     def get_top_members(self, count):
@@ -145,27 +136,23 @@ class Population(object):
         return top_keys
 
     def ranking_func(self, gene_item):
-        game_wins           = gene_item['game_wins']
-        coinflip_game_wins  = gene_item['coinflip_game_wins']
-        game_losses         = gene_item['game_losses']
-        age                 = max(1, float(self.current_generation - gene_item['generation'] + 1))
-
-        game_points         = gene_item['game_points']
-        points_per_generation = game_points / age
-
-        # the only behavior we want to award is winning without a coinflip
-        real_wins           = float(game_wins - coinflip_game_wins)
+        game_wins               = gene_item['game_wins']
+        game_draws              = gene_item['game_draws']
+        game_losses             = gene_item['game_losses']
+        game_points             = gene_item['game_points']
+        age                     = max(1, float(self.current_generation - gene_item['generation'] + 1))
+        points_per_generation   = game_points / age
 
         try:
-            winrate = (float(real_wins) / float(real_wins + game_losses))
+            winrate = winrate = ((float(game_wins) * 1.0 + float(game_draws) * 0.5) / float(game_wins + game_losses + game_draws))
         except ZeroDivisionError:
             winrate = 0
 
-        points_per_win = game_points / max(1, real_wins)
+        points_per_win = game_points / max(1, game_wins)
         winrate_factor = 100 * winrate
 
-        # over 100 games, vs an opponent who scores 25 points per game, how many points will we win (can be negative)
-        return 100 * (winrate * points_per_win - (1 - winrate) * 25)
+        return (points_per_generation + points_per_win) * winrate_factor
+        # return winrate_factor
 
     # engage each member in competition with each other member, recording the results
     def fitness_test(self):
@@ -195,15 +182,12 @@ class Population(object):
                     log_debug("Testing: {0} vs {1}".format(challenger_geneset, defender_geneset))
 
                     match = GinMatch(challenger_player, defender_player)
-                    num_inputs = 11 + 5 + 33
-                    num_outputs = 4
-                    num_hidden = int((num_inputs + num_outputs) * (2.0 / 3.0))
 
-                    challenger_weightset = WeightSet(challenger_geneset, num_inputs, num_hidden, num_outputs)
-                    defender_weightset = WeightSet(defender_geneset, num_inputs, num_hidden, num_outputs)
+                    challenger_weightset = WeightSet(challenger_geneset, self.num_inputs, self.num_hidden, self.num_outputs)
+                    defender_weightset = WeightSet(defender_geneset, self.num_inputs, self.num_hidden,self.num_outputs)
 
-                    challenger_observers = [Observer(challenger_player), Observer(match.table), Observer(match)]
-                    defender_observers   = [Observer(defender_player), Observer(match.table), Observer(match)]
+                    challenger_observers = [Observer(challenger_player), Observer(match.table)]
+                    defender_observers   = [Observer(defender_player), Observer(match.table)]
 
                     challenger_neuralnet = GinNeuralNet(challenger_observers, challenger_weightset)
                     defender_neuralnet   = GinNeuralNet(defender_observers,   defender_weightset)
@@ -222,38 +206,20 @@ class Population(object):
         # run matches and record output
         for match in matches:
             # run the match
-            match_result = match.run()
+            match.run()
+
+            p1_gene = player_geneset_dict[str(match.p1.id)]
+            p2_gene = player_geneset_dict[str(match.p2.id)]
 
             # update our records
-            winner                      = match_result['winner']
-            loser                       = match_result['loser']
-            winner_wins                 = match_result['winner_games_won']
-            winner_wins_by_coinflip     = match_result['winner_games_won_by_coinflip']
-            winner_losses               = match_result['winner_games_lost']
-            loser_wins                  = match_result['loser_games_won']
-            loser_wins_by_coinflip      = match_result['loser_games_won_by_coinflip']
-            loser_losses                = match_result['loser_games_lost']
-            winner_point_delta          = match_result['winner_point_delta']
-
-            # track match wins
-            winner_geneset = player_geneset_dict[str(winner.id)]
-            loser_geneset  = player_geneset_dict[str(loser.id)]
-
-            self.member_genes[winner_geneset]['game_points']  += winner_point_delta
-            self.member_genes[winner_geneset]['match_wins']   += 1
-            self.member_genes[loser_geneset]['match_losses']  += 1
-
-            # track game wins
-            self.member_genes[winner_geneset]['game_wins']    += winner_wins
-            self.member_genes[loser_geneset]['game_wins']     += loser_wins
-
-            # track coinflip wins
-            self.member_genes[winner_geneset]['coinflip_game_wins'] += winner_wins_by_coinflip
-            self.member_genes[loser_geneset]['coinflip_game_wins']  += loser_wins_by_coinflip
-
-            # track game losses
-            self.member_genes[winner_geneset]['game_losses'] += winner_losses
-            self.member_genes[loser_geneset]['game_losses']  += loser_losses
+            self.member_genes[p1_gene]['game_wins']    += match.p1_wins
+            self.member_genes[p2_gene]['game_wins']    += match.p2_wins
+            self.member_genes[p1_gene]['game_losses']  += match.p1_losses
+            self.member_genes[p2_gene]['game_losses']  += match.p2_losses
+            self.member_genes[p1_gene]['game_draws']   += match.p1_draws
+            self.member_genes[p2_gene]['game_draws']   += match.p2_draws
+            self.member_genes[p1_gene]['game_points']  += max(match.p1_score - match.p2_score, 0)
+            self.member_genes[p2_gene]['game_points']  += max(match.p2_score - match.p1_score, 0)
 
     # remove members from prior generations, sparing the top N specimens
     def cull(self):
@@ -266,8 +232,8 @@ class Population(object):
                 del self.member_genes[key]
 
     # breed the top N individuals against each other, sexually (no asexual reproduction)
-    def cross_over(self, breeder_count):
-        breeders = self.get_top_members(breeder_count)
+    def cross_over(self):
+        breeders = self.get_top_members(self.retain_best)
 
         for breeder in breeders:
             for mate in breeders:
@@ -275,7 +241,12 @@ class Population(object):
                 if mate is not breeder:
                     newborn = breeder.cross(mate)
                     newborn.mutate(0.075)
-                    self.add_member(newborn, self.current_generation + 1)
+                    self.add_member(newborn, self.current_generation + 1, max(self.member_genes[mate]['mutation'],self.member_genes[breeder]['mutation']) + 1)
+
+
+        # fill the remaining member with random genes
+        for i in range(self.population_size - len(self.member_genes)):
+            self.add_member(GeneSet(self.gene_size), self.current_generation + 1, 0)
 
     # TODO: track # of each type of action
     def draw(self):
@@ -287,14 +258,14 @@ class Population(object):
 
         # header row
         rows.append(["ranking",
-                     "skill game win rate (%)",
                      "score",
-                     "skill game wins",
-                     "coinflip game wins",
-                     "game losses",
-                     "total points",
-                     "match losses",
-                     "age"])
+                     "winrate",
+                     "wins",
+                     "losses",
+                     "draws",
+                     "points",
+                     "age",
+                     "mutation"])
 
         # gather data on our population
         max_age = 0
@@ -302,27 +273,15 @@ class Population(object):
         max_winrate = 0
         for item in self.member_genes.items():
             value = item[1]
-            # collect values
-            match_wins, match_losses = value['match_wins'], value['match_losses']
-            coinflip_game_wins = value['coinflip_game_wins']
 
             # track maximum score
             score = self.ranking_func(value)
             if score > max_score:
                 max_score = score
 
-
-            game_wins           = value['game_wins']
-            coinflip_game_wins  = value['coinflip_game_wins']
-            game_losses         = value['game_losses']
-            game_points         = value['game_points']
-            match_losses        = value['match_losses']
-
-            skill_game_wins = game_wins - coinflip_game_wins
-
             # calculate and track win rate
             try:
-                winrate = (float(skill_game_wins) / float(skill_game_wins + game_losses))
+                winrate = ((float(value['game_wins']) * 1.0 + float(value['game_draws']) * 0.5) / float(value['game_wins'] + value['game_losses'] + value['game_draws']))
             except ZeroDivisionError:
                 winrate = 0.00
 
@@ -335,7 +294,7 @@ class Population(object):
                 max_age = age
 
             # append values
-            data_rows.append([winrate, score, skill_game_wins, coinflip_game_wins, game_losses, game_points, match_losses, age])
+            data_rows.append([score, winrate, value['game_wins'], value['game_losses'], value['game_draws'], value['game_points'], age, value['mutation']])
 
         # sort by winrate
         data_rows.sort(key=itemgetter(1), reverse=True)
@@ -349,10 +308,9 @@ class Population(object):
             for j in range(len(rows[0]) - 1):
                 one_row.append(data_rows[i][j])
             rows.append(one_row)
-#        input_table.add_rows(rows[:11])
-        input_table.add_rows(rows)
+        input_table.add_rows(rows[:6])
 
-        output_text = "\n" + "                     LEADERBOARD FOR GENERATION #{0}  (population: {1}".format(
+        output_text = "\n" + "                     LEADERBOARD FOR GENERATION #{0}  (population: {1})".format(
             self.current_generation, len(self.member_genes))
 
         output_text += "\n" + input_table.draw()

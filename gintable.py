@@ -61,13 +61,10 @@ class GinTable(Observable):
 
         # we now add on the discard pile
         for i in range(len(self.discard_pile)):
-            data[i] = self.discard_pile[i].ranking()
+            data[i+1] = self.discard_pile[i].ranking()
 
         # we then add 0's up to 32 possible discards -- 32 = 52 - 10(cards per hand) X 2(hands)
-        discard_size = len(self.discard_pile)
-        for i in range(1, discard_size):
-            data[i] = self.discard_pile[i-1].ranking()
-        for i in range(discard_size, 1+32):
+        for i in range(1+len(self.discard_pile), 1+32):
             data[i] = 0
 
         return data

@@ -191,7 +191,7 @@ class NeuralNet(object):
 
 class GinNeuralNet(NeuralNet):
     def __init__(self, observers, weightset):
-        output_keys = ['action_start', 'action_end', 'index', 'accept_improper_knock']
+        output_keys = ['action_start', 'action_end', 'index']
         super(GinNeuralNet, self).__init__(observers, weightset, output_keys)
 
 
@@ -322,8 +322,8 @@ class WeightSet(object):
     def __init__(self, gene_set, num_inputs=None, num_hidden=None, num_outputs=None):
         # ensure correct args
         assert num_inputs is not None and num_hidden is not None and num_outputs is not None, "empty args"
-        assert len(gene_set.genes) >= num_inputs + num_hidden * num_inputs + num_outputs * num_hidden, \
-            "not enough genes to fill up our weights"
+        assert len(gene_set.genes) == num_inputs + (num_hidden * num_inputs) + (num_hidden * num_hidden) + (num_outputs * num_hidden), \
+            "genes size should be matched with our weights"
 
         # create structure
         self.weights = {'input': [], 'hidden': [], 'jidden': [], 'output': []}
